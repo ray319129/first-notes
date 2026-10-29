@@ -1,0 +1,18 @@
+{
+  "name": "first-notes",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "spicetify-creator",
+    "build-release": "spicetify-creator --out=dist --minify",
+    "watch": "spicetify-creator --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "spicetify-creator": "^1.0.17",
+    "typescript": "^7.0.2"
+  }
+}

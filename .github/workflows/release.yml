@@ -1,0 +1,36 @@
+# 推 v* 標籤時：建置自訂應用程式、打包成 zip、附在 GitHub Release 上（README 的安裝說明下載這個檔）
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build-release
+      # zip 裡就是放進 CustomApps 的資料夾
+      - run: |
+          NAME=$(node -p "require('./src/settings.json').nameId")
+          mv dist "$NAME"
+          zip -r "../$NAME.zip" "$NAME"
+          echo "ZIP=$NAME.zip" >> "$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP }}
+          generate_release_notes: true

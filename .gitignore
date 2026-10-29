@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+*.tgz
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+
+# 只在本機用的開發資料（交接文件、診斷頁與實測紀錄）
+HANDOFF.md
+.local/

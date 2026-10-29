@@ -1,0 +1,9 @@
+{
+  "name": "First Notes",
+  "description": "Guess the song from short clips (1s → 16s). Solo play with your own library, daily challenges with leaderboards, and real-time multiplayer rooms.",
+  "preview": "docs/preview.png",
+  "readme": "README.md",
+  "branch": "main",
+  "authors": [{ "name": "ray319129", "url": "https://github.com/ray319129" }],
+  "tags": ["game", "quiz", "multiplayer"]
+}
