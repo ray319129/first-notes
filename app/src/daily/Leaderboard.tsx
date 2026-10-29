@@ -2,6 +2,7 @@ import React from "react";
 import styles from "../css/game.module.css";
 import { errMsg } from "../lib/util";
 import { fetchLeaderboard } from "../net/api";
+import { AnswerMode } from "../game/types";
 import { Category, LeaderboardRow, Period } from "../net/protocol";
 
 const PERIODS: { value: Period; label: string }[] = [
@@ -10,29 +11,45 @@ const PERIODS: { value: Period; label: string }[] = [
   { value: "month", label: "本月" },
 ];
 
-/** 每日挑戰排行榜：今日／本週／本月 × 單一分類／全部分類加總 */
-export function Leaderboard(props: { categories: Category[]; category: string; me: string; refreshKey?: number }) {
+export const MODE_LABELS: { value: AnswerMode; label: string }[] = [
+  { value: "free", label: "自由輸入" },
+  { value: "choice", label: "選擇題" },
+];
+
+/** 每日挑戰排行榜：自由輸入／選擇題分開 × 今日／本週／本月 × 單一分類／全部分類加總 */
+export function Leaderboard(props: { categories: Category[]; category: string; mode: AnswerMode; me: string; refreshKey?: number }) {
   const [period, setPeriod] = React.useState<Period>("day");
   const [scope, setScope] = React.useState<"category" | "all">("category");
+  const [mode, setMode] = React.useState<AnswerMode>(props.mode);
   const [data, setData] = React.useState<{ from: string; to: string; rows: LeaderboardRow[] } | null>(null);
   const [error, setError] = React.useState("");
   const category = scope === "all" ? "all" : props.category;
 
+  // 外面換了作答方式（或玩完一局）就跟著切過去
+  React.useEffect(() => setMode(props.mode), [props.mode]);
+
   React.useEffect(() => {
     let cancelled = false;
     setError("");
-    fetchLeaderboard(period, category)
+    fetchLeaderboard(period, category, mode)
       .then((d) => !cancelled && setData(d))
       .catch((e) => !cancelled && setError(`讀不到排行榜：${errMsg(e)}`));
     return () => {
       cancelled = true;
     };
-  }, [period, category, props.refreshKey]);
+  }, [period, category, mode, props.refreshKey]);
 
   const catName = props.categories.find((c) => c.id === props.category)?.name ?? props.category;
   return (
     <div>
       <div className={styles.row}>
+        <div className={styles.segmented}>
+          {MODE_LABELS.map((m) => (
+            <button key={m.value} className={mode === m.value ? styles.segActive : styles.seg} onClick={() => setMode(m.value)}>
+              {m.label}
+            </button>
+          ))}
+        </div>
         <div className={styles.segmented}>
           {PERIODS.map((p) => (
             <button key={p.value} className={period === p.value ? styles.segActive : styles.seg} onClick={() => setPeriod(p.value)}>

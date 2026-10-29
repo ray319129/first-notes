@@ -1,5 +1,5 @@
 // 客戶端與伺服器（server/）共用的資料格式。只放型別與常數，兩邊都能 import
-import { Guess, Settings, Track } from "../game/types";
+import { AnswerMode, Guess, Settings, Track } from "../game/types";
 
 // ───────── 每日挑戰 ─────────
 
@@ -13,19 +13,30 @@ export interface Category {
 }
 
 export const DAILY_ROUNDS = 5;
-/** 每日挑戰規則固定：從頭播、自由輸入，大家條件一樣才能比 */
-export const DAILY_SETTINGS: Settings = {
+export const DAILY_CHOICE_COUNT = 6;
+/** 每日挑戰規則固定：從頭播；作答方式可選，但同一種方式的人才放在同一個排行榜比 */
+export const dailySettings = (answerMode: AnswerMode): Settings => ({
   rounds: DAILY_ROUNDS,
   startMode: "beginning",
-  answerMode: "free",
-  choiceCount: 6,
+  answerMode,
+  choiceCount: DAILY_CHOICE_COUNT,
   distractor: "artist",
-};
+});
+
+export const isAnswerMode = (v: unknown): v is AnswerMode => v === "free" || v === "choice";
+
+/** 選擇題的選項（含答案、已洗牌）和備用干擾選項。大家拿到同一份，選擇題才公平 */
+export interface DailyChoice {
+  choices: Track[];
+  reserve: Track[];
+}
 
 export interface DailySet {
   category: string;
   date: string;
   tracks: Track[];
+  /** 有人第一次玩選擇題時才產生，所以可能還沒有 */
+  choices: DailyChoice[] | null;
 }
 
 export interface ScoreSubmit {
@@ -33,6 +44,7 @@ export interface ScoreSubmit {
   name: string;
   category: string;
   date: string;
+  mode: AnswerMode;
   score: number;
   max: number;
   /** 每題在第幾次猜中（0 起算），沒猜中 -1 */

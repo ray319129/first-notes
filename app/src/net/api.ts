@@ -1,6 +1,7 @@
 // 跟後端（server/）溝通
 import { load, save } from "../lib/storage";
-import { Category, DailySet, LeaderboardRow, Period, ScoreSubmit } from "./protocol";
+import { AnswerMode } from "../game/types";
+import { Category, DailyChoice, DailySet, LeaderboardRow, Period, ScoreSubmit } from "./protocol";
 
 /**
  * 預設伺服器網址（公開網址，不是密碼）。本機開發用 `http://127.0.0.1:8787`（wrangler dev）。
@@ -25,11 +26,15 @@ const post = <T>(path: string, data: unknown) => call<T>(path, { method: "POST",
 
 export const fetchCategories = () => call<{ today: string; categories: Category[] }>("/api/categories");
 export const fetchDaily = (category: string) => call<{ today: string; set: DailySet | null }>(`/api/daily/${category}`);
-export const submitDaily = (category: string, userId: string, tracks: DailySet["tracks"]) =>
-  post<{ today: string; set: DailySet }>(`/api/daily/${category}`, { userId, tracks });
+/** 送出今天的題目（和選擇題選項）。伺服器以第一個送到的為準，回傳實際採用的那組 */
+export const submitDaily = (category: string, userId: string, tracks: DailySet["tracks"], choices?: DailyChoice[]) =>
+  post<{ today: string; set: DailySet }>(`/api/daily/${category}`, { userId, tracks, choices });
 export const submitScore = (s: ScoreSubmit) => post<{ accepted: boolean }>("/api/scores", s);
-export const fetchLeaderboard = (period: Period, category: string) =>
-  call<{ from: string; to: string; rows: LeaderboardRow[] }>(`/api/leaderboard?period=${period}&category=${encodeURIComponent(category)}`);
+export const fetchLeaderboard = (period: Period, category: string, mode: AnswerMode) =>
+  call<{ from: string; to: string; rows: LeaderboardRow[] }>(
+    `/api/leaderboard?period=${period}&category=${encodeURIComponent(category)}&mode=${mode}`,
+  );
+export const isDefaultServer = () => getServer() === DEFAULT_SERVER;
 export const createRoom = () => post<{ code: string }>("/api/rooms", {});
 export const roomSocketUrl = (code: string) => `${getServer().replace(/^http/, "ws")}/api/rooms/${code}/ws`;
 

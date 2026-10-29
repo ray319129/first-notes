@@ -1,7 +1,7 @@
-import { DAILY_ROUNDS, LeaderboardRow, Period } from "../../app/src/net/protocol";
+import { DAILY_CHOICE_COUNT, DAILY_ROUNDS, DailySet, isAnswerMode, LeaderboardRow, Period } from "../../app/src/net/protocol";
 import { MAX_GUESSES } from "../../app/src/game/types";
 import { CATEGORIES, findCategory } from "./categories";
-import { cleanName, cleanUserId, sanitizeTracks } from "./validate";
+import { cleanName, cleanUserId, sanitizeChoices, sanitizeTracks } from "./validate";
 
 export { Room } from "./room";
 
@@ -61,11 +61,11 @@ async function readJson(req: Request): Promise<Record<string, unknown> | null> {
   }
 }
 
-async function getDaily(env: Env, category: string, date: string) {
-  const row = await env.DB.prepare("SELECT tracks FROM daily_sets WHERE category = ? AND date = ?")
+async function getDaily(env: Env, category: string, date: string): Promise<DailySet | null> {
+  const row = await env.DB.prepare("SELECT tracks, choices FROM daily_sets WHERE category = ? AND date = ?")
     .bind(category, date)
-    .first<{ tracks: string }>();
-  return row ? { category, date, tracks: JSON.parse(row.tracks) } : null;
+    .first<{ tracks: string; choices: string | null }>();
+  return row ? { category, date, tracks: JSON.parse(row.tracks), choices: row.choices ? JSON.parse(row.choices) : null } : null;
 }
 
 async function handle(req: Request, env: Env): Promise<Response> {
@@ -79,7 +79,7 @@ async function handle(req: Request, env: Env): Promise<Response> {
   if (resource === "categories" && req.method === "GET") return json({ today: today(), categories: CATEGORIES });
 
   // GET /api/daily/:category → 今天的題目（還沒人產生就是 null）
-  // POST /api/daily/:category {userId, tracks} → 第一個送上來的為準，回傳實際採用的那組
+  // POST /api/daily/:category {userId, tracks, choices?} → 題目和選擇題選項都是第一個送上來的為準，回傳實際採用的那組
   if (resource === "daily" && id) {
     if (!findCategory(id)) return fail("unknown category", 404);
     const date = today();
@@ -94,21 +94,33 @@ async function handle(req: Request, env: Env): Promise<Response> {
       )
         .bind(id, date, JSON.stringify(tracks), userId, Date.now())
         .run();
-      return json({ today: date, set: await getDaily(env, id, date) });
+      let set = (await getDaily(env, id, date))!;
+      // 選項要對得上實際採用的題目（不一定是這次送的那組）
+      if (!set.choices && body?.choices !== undefined) {
+        const choices = sanitizeChoices(body.choices, set.tracks, DAILY_CHOICE_COUNT);
+        if (!choices) return fail("invalid choices");
+        await env.DB.prepare("UPDATE daily_sets SET choices = ? WHERE category = ? AND date = ? AND choices IS NULL")
+          .bind(JSON.stringify(choices), id, date)
+          .run();
+        set = (await getDaily(env, id, date))!;
+      }
+      return json({ today: date, set });
     }
   }
 
-  // POST /api/scores：每人每天每分類只收第一次（重玩不算）
+  // POST /api/scores：每人每天每分類只收第一次（重玩、或換另一種作答方式都不算）
   if (resource === "scores" && req.method === "POST") {
     const body = await readJson(req);
     const userId = cleanUserId(body?.userId);
     const name = cleanName(body?.name);
     const category = typeof body?.category === "string" ? body.category : "";
     const date = body?.date;
+    // 舊版客戶端沒有送 mode，當成自由輸入
+    const mode = body?.mode ?? "free";
     const max = DAILY_ROUNDS * MAX_GUESSES;
     const score = body?.score;
     const solvedAt = body?.solvedAt;
-    if (!userId || !name || !findCategory(category) || !isDate(date)) return fail("invalid score");
+    if (!userId || !name || !findCategory(category) || !isDate(date) || !isAnswerMode(mode)) return fail("invalid score");
     if (typeof score !== "number" || !Number.isInteger(score) || score < 0 || score > max) return fail("invalid score");
     if (!Array.isArray(solvedAt) || solvedAt.length !== DAILY_ROUNDS) return fail("invalid score");
     // 分數要跟每題猜中的次數對得上
@@ -117,16 +129,18 @@ async function handle(req: Request, env: Env): Promise<Response> {
     // 跨午夜才玩完的，允許交昨天的
     const yesterday = ymd(new Date(taipeiNow().getTime() - 86400_000));
     if (date !== today() && date !== yesterday) return fail("too late");
-    if (!(await getDaily(env, category, date))) return fail("no daily set", 404);
+    const set = await getDaily(env, category, date);
+    if (!set) return fail("no daily set", 404);
+    if (mode === "choice" && !set.choices) return fail("no choices for this set");
     const r = await env.DB.prepare(
-      "INSERT OR IGNORE INTO scores (user_id, name, category, date, score, max, solved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO scores (user_id, name, category, date, mode, score, max, solved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-      .bind(userId, name, category, date, score, max, JSON.stringify(solvedAt), Date.now())
+      .bind(userId, name, category, date, mode, score, max, JSON.stringify(solvedAt), Date.now())
       .run();
     return json({ accepted: r.meta.changes > 0 });
   }
 
-  // GET /api/leaderboard?period=day|week|month&category=all|<id>&date=YYYY-MM-DD
+  // GET /api/leaderboard?period=day|week|month&category=all|<id>&mode=free|choice&date=YYYY-MM-DD
   if (resource === "leaderboard" && req.method === "GET") {
     const period = (url.searchParams.get("period") ?? "day") as Period;
     if (!["day", "week", "month"].includes(period)) return fail("invalid period");
@@ -134,17 +148,19 @@ async function handle(req: Request, env: Env): Promise<Response> {
     if (!isDate(date)) return fail("invalid date");
     const category = url.searchParams.get("category") ?? "all";
     if (category !== "all" && !findCategory(category)) return fail("unknown category", 404);
+    const mode = url.searchParams.get("mode") ?? "free";
+    if (!isAnswerMode(mode)) return fail("invalid mode");
     const [from, to] = periodRange(period, date);
     const where = category === "all" ? "" : "AND category = ?";
-    const binds: unknown[] = category === "all" ? [from, to] : [from, to, category];
+    const binds: unknown[] = category === "all" ? [from, to, mode] : [from, to, mode, category];
     const { results } = await env.DB.prepare(
       `SELECT user_id AS userId, MAX(name) AS name, SUM(score) AS score, SUM(max) AS max, COUNT(*) AS games
-       FROM scores WHERE date BETWEEN ? AND ? ${where}
+       FROM scores WHERE date BETWEEN ? AND ? AND mode = ? ${where}
        GROUP BY user_id ORDER BY score DESC, max ASC, MIN(created_at) ASC LIMIT 50`,
     )
       .bind(...binds)
       .all<LeaderboardRow>();
-    return json({ period, category, from, to, rows: results });
+    return json({ period, category, mode, from, to, rows: results });
   }
 
   // POST /api/rooms → 新房號；GET /api/rooms/:code/ws → 連進房間
